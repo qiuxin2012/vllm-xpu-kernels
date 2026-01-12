@@ -12,6 +12,8 @@ cmake_minimum_required(VERSION 3.26)
 # cmake --build . --target _C
 # cmake --install . --component _C
 project(vllm_extensions LANGUAGES CXX)
+option(USE_KINETO "Enable Kineto profiling" OFF)
+option(BUILD_KINETO "Build Kineto" OFF)
 
 # XPU by default, used by setup.py
 set(VLLM_TARGET_DEVICE "xpu" CACHE STRING "Target device backend for vLLM")
@@ -62,6 +64,8 @@ set(XPU_SPECIFIC_KERNELS_ENABLED ON)
 # `VLLM_PYTHON_EXECUTABLE` and is one of the supported versions.
 #
 if (VLLM_PYTHON_EXECUTABLE)
+  message(STATUS "VLLM_PYTHON_EXECUTABLE: ${VLLM_PYTHON_EXECUTABLE}")
+  # string(REPLACE "\\" "/" PYTHON_EXECUTABLE_WIN "${VLLM_PYTHON_EXECUTABLE}")
   find_python_from_executable(${VLLM_PYTHON_EXECUTABLE} "${PYTHON_SUPPORTED_VERSIONS}")
 else()
   message(FATAL_ERROR
@@ -76,8 +80,13 @@ append_cmake_prefix_path("torch" "torch.utils.cmake_prefix_path")
 
 #
 # Import torch cmake configuration.
+if(WIN32)
+    set(BUILD_KINETO OFF)
+    set(USE_KINETO OFF)
+endif()
 find_package(Torch REQUIRED)
 
+message(STATUS "CMAKE_SIZEOF_VOID_P: ${CMAKE_SIZEOF_VOID_P}")
 find_package(oneDNN REQUIRED)
 
 #
@@ -142,7 +151,7 @@ if(VLLM_GPU_LANG STREQUAL "SYCL")
   # TODO: check SYCL flags
   set(CMAKE_${VLLM_GPU_LANG}_FLAGS "${CMAKE_${VLLM_GPU_LANG}_FLAGS}")
   set(SYCL_FIRST_HEADER "${CMAKE_CURRENT_SOURCE_DIR}/csrc/sycl_first.h")
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -include ${SYCL_FIRST_HEADER}")
+  set(CMAKE_`CXX`_FLAGS "${CMAKE_CXX_FLAGS} -include ${SYCL_FIRST_HEADER}")
 
   # ============= COMPILE OPTIONS ==================
   set(SYCL_FLAGS "")
@@ -192,7 +201,8 @@ if(VLLM_GPU_LANG STREQUAL "SYCL")
   set(CUTLASS_ENABLE_HEADERS_ONLY "ON" CACHE BOOL "Enable only the header library")
 
   # Set CUTLASS_REVISION. Used for FetchContent. Also fixes some bogus messages when building.
-  set(CUTLASS_REVISION "3f2a337e885db0fb97b2a6ba514eb7a2a734ac4a" CACHE STRING "CUTLASS revision to use")
+  # set(CUTLASS_REVISION "3f2a337e885db0fb97b2a6ba514eb7a2a734ac4a" CACHE STRING "CUTLASS revision to use")
+  set(CUTLASS_REVISION "de5ab96e7f0bb1dde272a762586640867fbcc786" CACHE STRING "CUTLASS revision to use")
 
   if (DEFINED ENV{VLLM_CUTLASS_SRC_DIR})
     set(VLLM_CUTLASS_SRC_DIR $ENV{VLLM_CUTLASS_SRC_DIR})
@@ -208,7 +218,7 @@ if(VLLM_GPU_LANG STREQUAL "SYCL")
     # Use the specified CUTLASS source directory for compilation if VLLM_CUTLASS_SRC_DIR  is provided
     FetchContent_Declare(
         cutlass-sycl
-        GIT_REPOSITORY https://github.com/intel/sycl-tla.git
+        GIT_REPOSITORY https://github.com/qiuxin2012/sycl-tla.git
 
         # Please keep this in sync with CUTLASS_REVISION line above.
         GIT_TAG ${CUTLASS_REVISION}

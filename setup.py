@@ -41,6 +41,7 @@ def is_ccache_available() -> bool:
 
 
 def is_ninja_available() -> bool:
+    print("find ninja: ", which("ninja"))
     return which("ninja") is not None
 
 
@@ -146,7 +147,10 @@ class cmake_build_ext(build_ext):
 
         # Pass the python executable to cmake so it can find an exact
         # match.
-        cmake_args += ['-DVLLM_PYTHON_EXECUTABLE={}'.format(sys.executable)]
+        python_executable = sys.executable
+        if os.name == 'nt':
+            python_executable = python_executable.replace('\\', '/')
+        cmake_args += ['-DVLLM_PYTHON_EXECUTABLE={}'.format(python_executable)]
 
         # Pass the python path to cmake so it can reuse the build dependencies
         # on subsequent calls to python.
@@ -169,8 +173,16 @@ class cmake_build_ext(build_ext):
             cmake_args += ['-DNVCC_THREADS={}'.format(nvcc_threads)]
 
         if is_ninja_available():
-            build_tool = ['-G', 'Ninja']
+            # build_tool = ['-G', 'Visual Studio 17 2022']
+            build_tool = ['-G', 'Ninja'] #, "-A", "x64"]
             cmake_args += [
+                # '-A', 'x64',
+                # '-DCMAKE_SYSTEM_PROCESSOR=AMD64',
+                # '-DCMAKE_CXX_FLAGS=-m64',
+                # '-DCMAKE_C_FLAGS=-m64',
+                '-DCMAKE_SYSTEM_NAME=Windows',
+                '-DCMAKE_CXX_FLAGS="/MD"',
+                '-DCMAKE_C_FLAGS="/MD"',
                 '-DCMAKE_JOB_POOL_COMPILE:STRING=compile',
                 '-DCMAKE_JOB_POOLS:STRING=compile={}'.format(num_jobs),
             ]
@@ -178,11 +190,18 @@ class cmake_build_ext(build_ext):
             # Default build tool to whatever cmake picks.
             build_tool = []
         my_env = os.environ.copy()
-        icx_path = shutil.which('icx')
-        icpx_path = shutil.which('icpx')
+        # icx_path = shutil.which('icx')
+        # icpx_path = shutil.which('icpx')
+        # print(my_env)
+        icx_path = "C:\\\"Program Files (x86)\"\Intel\oneAPI\compiler\\2025.2\\bin\icx-cl.exe"
+        icpx_path = 'C:\\\"Program Files (x86)\"\Intel\oneAPI\compiler\\2025.2\\bin\icx-cl.exe'
+        # icx_path = "C:\\\"Program Files (x86)\"\Intel\oneAPI\compiler\\2025.2\\bin\icx.exe"
+        # icpx_path = 'C:\\\"Program Files (x86)\"\Intel\oneAPI\compiler\\2025.2\\bin\icx.exe'
+        ninja_exe = os.path.join(os.path.dirname(sys.executable), "Library\\bin", "ninja.exe")
         build_option_gpu = {
             "CMAKE_C_COMPILER": f"{icx_path}",
             "CMAKE_CXX_COMPILER": f"{icpx_path}",
+            "CMAKE_MAKE_PROGRAM": f"{ninja_exe}",
         }
         for key, value in build_option_gpu.items():
             if value is not None:
