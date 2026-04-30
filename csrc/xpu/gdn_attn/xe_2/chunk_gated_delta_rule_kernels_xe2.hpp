@@ -929,6 +929,7 @@ CUTE_DEVICE void chunk_fwd_o_kernel(
     const T* dt_bias,
     T* ssm_state,
     const int ssm_state_stride_0,
+    float* ssm_state_f32,
     const int* query_start_loc,
     const int* cache_indices,
     const bool* has_initial_state,
@@ -1005,6 +1006,23 @@ CUTE_DEVICE void chunk_fwd_o_kernel(
         static_cast<int64_t>(cache_indices[batch_id]) * ssm_state_stride_0 +
         v_head_id * head_v_dim * head_k_dim;
 
+    float* ssm_state_f32_ptr =
+        ssm_state_f32 +
+        static_cast<int64_t>(current_batch_id) * num_v_heads * head_v_dim *
+            head_k_dim +
+        static_cast<int64_t>(v_head_id) * head_v_dim * head_k_dim;
+
+    if (initial_state) {
+      for (int e = local_id; e < head_v_dim * head_k_dim; e += local_range) {
+        ssm_state_f32_ptr[e] = static_cast<float>(ssm_state_ptr[e]);
+      }
+    } else {
+      for (int e = local_id; e < head_v_dim * head_k_dim; e += local_range) {
+        ssm_state_f32_ptr[e] = 0.0f;
+      }
+    }
+    item.barrier(sycl::access::fence_space::global_and_local);
+
     for (int chunk_id = 0; chunk_id < current_chunks; ++chunk_id) {
       const int out_chunk_offset = seq_start_offset + chunk_id * chunk_size;
       const int chunk_offset = (pre_chunks + chunk_id) * chunk_size;
@@ -1054,6 +1072,11 @@ CUTE_DEVICE void chunk_fwd_o_kernel(
       auto S_tensor_shape = make_shape(head_v_dim, head_k_dim);
       auto S_tensor = make_tensor(
           make_gmem_ptr(S_ptr),
+          make_layout(S_tensor_shape, make_stride(head_k_dim, _1{})));
+
+      float* S_f32_ptr = ssm_state_f32_ptr;
+      auto S_f32_tensor = make_tensor(
+          make_gmem_ptr(S_f32_ptr),
           make_layout(S_tensor_shape, make_stride(head_k_dim, _1{})));
 
       Tensor cU = make_identity_tensor(U_tensor.shape());
@@ -1198,10 +1221,12 @@ CUTE_DEVICE void chunk_fwd_o_kernel(
 
       Tensor cS = make_identity_tensor(S_tensor.shape());
 
-      auto copy_S_c = get_block_2d_copy_C<void>(mma, S_tensor);
+      auto copy_S_f32_c = get_block_2d_copy_C<void>(mma, S_f32_tensor);
+      auto copy_S_f32_d = get_block_2d_copy_D<void>(mma, S_f32_tensor);
       auto copy_S_d = get_block_2d_copy_D<void>(mma, S_tensor);
 
-      auto thr_copy_S_c = copy_S_c.get_slice(local_id);
+      auto thr_copy_S_f32_c = copy_S_f32_c.get_slice(local_id);
+      auto thr_copy_S_f32_d = copy_S_f32_d.get_slice(local_id);
       auto thr_copy_S_d = copy_S_d.get_slice(local_id);
 
       for (int dv = 0; dv < head_v_dim / chunk_size; ++dv) {
@@ -1213,13 +1238,13 @@ CUTE_DEVICE void chunk_fwd_o_kernel(
           auto tSrS_d = thr_mma.partition_sg_fragment_C(gS_C);
 
           if (chunk_id != 0 || initial_state) {
-            auto tCgS_c = thr_copy_S_c.partition_S(gS_C);
-            auto tCrS_c = thr_copy_S_c.partition_sg_fragment_D(gS_C);
-            copy(copy_S_c, tCgS_c, tCrS_c);
+            auto tCgS_f32_c = thr_copy_S_f32_c.partition_S(gS_C);
+            auto tCrS_f32_c = thr_copy_S_f32_c.partition_sg_fragment_D(gS_C);
+            copy(copy_S_f32_c, tCgS_f32_c, tCrS_f32_c);
 
-            reorder(tCrS_c, tSrS_d);
+            reorder(tCrS_f32_c, tSrS_d);
             CUTE_UNROLL
-            for (int i = 0; i < tCrS_c.size(); ++i) {
+            for (int i = 0; i < tCrS_f32_c.size(); ++i) {
               tSrS_d(i) *= g_last_value_exp;
             }
           } else {
@@ -1228,7 +1253,20 @@ CUTE_DEVICE void chunk_fwd_o_kernel(
 
           gemm_TTS_k_multi(
               U_tensor_T, K_tensor_T, tSrS_d, dv, dk, mma, g_multi_slm_ptr);
-          reorder(tSrS_d, tCrS_d);
+
+          // reorder MMA accumulator (fp32) to copy layout once
+          auto tCrS_f32_d = thr_copy_S_f32_d.partition_sg_fragment_S(gS_C);
+          auto tCgS_f32_d = thr_copy_S_f32_d.partition_D(gS_C);
+          reorder(tSrS_d, tCrS_f32_d);
+
+          // write fp32 to workspace (no precision loss across chunks)
+          copy(copy_S_f32_d, tCrS_f32_d, tCgS_f32_d);
+
+          // cast fp32 → fp16 and write to ssm_state for GEMM consumers
+          CUTE_UNROLL
+          for (int i = 0; i < tCrS_f32_d.size(); ++i) {
+            tCrS_d(i) = static_cast<T>(tCrS_f32_d(i));
+          }
           copy(copy_S_d, tCrS_d, tCgS_d);
         }
       }
@@ -1286,6 +1324,7 @@ void kernel_launcher(
     const T* dt_bias,
     T* ssm_state,
     const int ssm_state_stride_0,
+    float* ssm_state_f32,
     const int* query_start_loc,
     const int* cache_indices,
     const bool* has_initial_state,
@@ -1521,6 +1560,7 @@ void kernel_launcher(
               dt_bias,
               ssm_state,
               ssm_state_stride_0,
+              ssm_state_f32,
               query_start_loc,
               cache_indices,
               has_initial_state,
@@ -1586,6 +1626,10 @@ void chunk_gated_delta_rule_impl_xe2(
       {num_v_heads, total_seqlen + padding_size, head_v_dim},
       torch::dtype(dtype).device(device).requires_grad(false));
 
+  torch::Tensor ssm_state_f32 = torch::zeros(
+      {batch_size, num_v_heads, head_v_dim, head_k_dim},
+      torch::dtype(torch::kFloat32).device(device).requires_grad(false));
+
 #define KERNEL_LAUNCHER(scalar_t)                                  \
   kernel_launcher<scalar_t>(                                       \
       queue,                                                       \
@@ -1602,6 +1646,7 @@ void chunk_gated_delta_rule_impl_xe2(
       reinterpret_cast<scalar_t*>(dt_bias.data_ptr()),             \
       reinterpret_cast<scalar_t*>(ssm_state.data_ptr()),           \
       ssm_state_stride_0,                                          \
+      reinterpret_cast<float*>(ssm_state_f32.data_ptr()),          \
       reinterpret_cast<int*>(query_start_loc.data_ptr()),          \
       reinterpret_cast<int*>(cache_indices.data_ptr()),            \
       has_initial_state.has_value()                                \
