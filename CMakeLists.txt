@@ -37,7 +37,7 @@ install(CODE "set(CMAKE_INSTALL_LOCAL_ONLY TRUE)" ALL_COMPONENTS)
 set(PYTHON_SUPPORTED_VERSIONS "3.9" "3.10" "3.11" "3.12")
 
 # Supported Intel GPU architectures.
-set(SYCL_SUPPORTED_ARCHS "intel_gpu_pvc;intel_gpu_bmg_g21")
+set(SYCL_SUPPORTED_ARCHS "intel_gpu_bmg_g21")
 
 #
 # Supported/expected torch versions for XPU.
@@ -47,7 +47,7 @@ set(SYCL_SUPPORTED_ARCHS "intel_gpu_pvc;intel_gpu_bmg_g21")
 #
 # TODO: we need to align torch version with used in vLLM.
 #
-set(TORCH_SUPPORTED_VERSION_XPU "2.9.0")
+set(TORCH_SUPPORTED_VERSION_XPU "2.10.0")
 
 set(BUILD_SYCL_TLA_KERNELS ON CACHE BOOL "Build SYCL-TLA based kernels for XPU")
 # ARCHITECTURE OPTIONS
@@ -179,8 +179,8 @@ if(VLLM_GPU_LANG STREQUAL "SYCL")
   set(SYCL_DEVICE_LINK_FLAGS ${SYCL_DEVICE_LINK_FLAGS} "-Xspirv-translator;-spirv-ext=+SPV_INTEL_split_barrier,+SPV_INTEL_2d_block_io,+SPV_INTEL_subgroup_matrix_multiply_accumulate")
 
   # TODO: make AOT configurable
-  set(AOT_DEVICES "pvc,bmg-g21-a0")
-  set(XE2_AOT_DEVICES "pvc,bmg-g21-a0")
+  set(AOT_DEVICES "bmg-g21-a0")
+  set(XE2_AOT_DEVICES "bmg-g21-a0")
 
   # Final link option be like:
   # icpx -fsycl -fsycl-target=spir64_gen ${SYCL_DEVICE_LINK_FLAGS} -Xsycl-target-backend=spir64_gen '${SYCL_OFFLINE_COMPILER_FLAGS}' kernel.o -o device-code.o

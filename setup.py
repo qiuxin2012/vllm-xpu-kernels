@@ -190,11 +190,12 @@ class cmake_build_ext(build_ext):
             # Default build tool to whatever cmake picks.
             build_tool = []
         my_env = os.environ.copy()
-        # icx_path = shutil.which('icx')
-        # icpx_path = shutil.which('icpx')
+        icx_path = shutil.which('icx-cl')
+        # icpx_path = shutil.which('icpx-cl')
+        icpx_path = icx_path
         # print(my_env)
-        icx_path = "C:\\\"Program Files (x86)\"\Intel\oneAPI\compiler\\2025.2\\bin\icx-cl.exe"
-        icpx_path = 'C:\\\"Program Files (x86)\"\Intel\oneAPI\compiler\\2025.2\\bin\icx-cl.exe'
+        # icx_path = "C:\\\"Program Files (x86)\"\Intel\oneAPI\compiler\\2025.3\\bin\icx-cl.exe"
+        # icpx_path = "C:\\\"Program Files (x86)\"\Intel\oneAPI\compiler\\2025.3\\bin\icx-cl.exe"
         # icx_path = "C:\\\"Program Files (x86)\"\Intel\oneAPI\compiler\\2025.2\\bin\icx.exe"
         # icpx_path = 'C:\\\"Program Files (x86)\"\Intel\oneAPI\compiler\\2025.2\\bin\icx.exe'
         ninja_exe = os.path.join(os.path.dirname(sys.executable), "Library\\bin", "ninja.exe")
